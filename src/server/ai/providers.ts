@@ -1,6 +1,9 @@
 import { ApiError } from '@/lib/errors';
 import type { Provider, ProviderInput, ProviderTurn } from './contracts';
+import { brainConfig } from '@/server/brain/client';
 export function aiConfiguration() {
+  if (process.env.AI_ENGINE === 'brain')
+    return { provider: 'brain', model: 'brain', configured: brainConfig().configured, key: '' };
   const provider = process.env.AI_PROVIDER === 'gemini' ? 'gemini' : 'openai';
   const key = process.env[provider === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY']?.trim();
   const model =

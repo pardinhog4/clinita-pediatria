@@ -11,6 +11,17 @@ import { audit, scopeRow, clinicalAccess, receptionRoles, clinicRoles } from './
 import { readLimited } from './http';
 import { aiConfiguration } from './ai/providers';
 import { conversationPlan } from './referrals';
+import { brainEnabled, brainOnline } from './brain/client';
+import {
+  brainClose,
+  brainFamilyMessage,
+  brainGiveBack,
+  brainReset,
+  brainTakeOver,
+  brainTeamMessage,
+  sendToBrain,
+  sweepStaleBrainRuns,
+} from './brain/bridge';
 export async function sandboxConversation(
   c: import('pg').PoolClient,
   ctx: Context,
@@ -33,9 +44,11 @@ export async function listSandbox(ctx: Context, unitId: string) {
   permit(ctx, receptionRoles);
   assertUnit(ctx, unitId);
   const config = aiConfiguration();
-  const [worker] = await query(
-    "SELECT EXISTS(SELECT 1 FROM worker_heartbeats WHERE last_seen>now()-interval '30 seconds') AS online",
-  );
+  const [worker] = brainEnabled()
+    ? [{ online: await brainOnline() }]
+    : await query(
+        "SELECT EXISTS(SELECT 1 FROM worker_heartbeats WHERE last_seen>now()-interval '30 seconds') AS online",
+      );
   const data = await query(
     `SELECT c.id,c.guardian,c.patient_id,c.ai_mode,c.version,c.created_at,c.summary,c.queue_id,q.name AS queue_name,ar.status AS run_status FROM conversations c LEFT JOIN service_queues q ON q.id=c.queue_id AND q.tenant_id=c.tenant_id LEFT JOIN LATERAL(SELECT status FROM agent_runs WHERE tenant_id=c.tenant_id AND conversation_id=c.id ORDER BY created_at DESC LIMIT 1)ar ON true WHERE c.tenant_id=$1 AND c.unit_id=$2 AND c.sandbox=true AND c.deleted_at IS NULL AND (c.include_clinical_context=false OR $3::boolean) ORDER BY c.created_at DESC LIMIT 100`,
     [ctx.tenantId, unitId, clinicRoles.includes(ctx.role)],
@@ -91,6 +104,7 @@ export async function createSandbox(ctx: Context, input: unknown) {
   });
 }
 export async function sandboxDetail(ctx: Context, id: string) {
+  await sweepStaleBrainRuns(ctx.tenantId);
   return transaction(async (c) => {
     const conv = await sandboxConversation(c, ctx, id);
     const { rows: messages } = await c.query(
@@ -223,6 +237,8 @@ export async function humanSandboxMessage(ctx: Context, id: string, input: unkno
     await audit(c, ctx, 'sandbox.human_message', 'conversations', id, conv.unit_id, {
       direction: d.direction,
     });
+    if (d.direction === 'OUTBOUND') await brainTeamMessage(id, d.content, ctx.name);
+    else await brainFamilyMessage(id, d.content, d.request_id);
     return message;
   });
 }
@@ -246,9 +262,11 @@ export async function enqueueSandbox(ctx: Context, id: string, input: unknown) {
   if (!config.configured)
     throw new ApiError(
       503,
-      'Configure OPENAI_API_KEY no .env e reinicie o servidor e o worker. Para Gemini, configure também GEMINI_MODEL.',
+      brainEnabled()
+        ? 'Configure BRAIN_API_KEY, BRAIN_TOOLS_SECRET e BRAIN_WEBHOOK_SECRET no .env (motor brain-desk).'
+        : 'Configure OPENAI_API_KEY no .env e reinicie o servidor e o worker. Para Gemini, configure também GEMINI_MODEL.',
     );
-  return transaction(async (c) => {
+  const queued = await transaction(async (c) => {
     const conv = await sandboxConversation(c, ctx, id, true);
     const {
       rows: [existing],
@@ -344,8 +362,31 @@ export async function enqueueSandbox(ctx: Context, id: string, input: unknown) {
       provider: config.provider,
       model: config.model,
     });
-    return run;
+    return { run, conv, inputId, selected };
   });
+  if ('idempotent' in queued) return queued;
+  if (brainEnabled()) {
+    // O brain recebe a mensagem (e os anexos) depois do commit, para enxergar a execução pendente.
+    const [input] = await query('SELECT content FROM messages WHERE tenant_id=$1 AND id=$2', [
+      ctx.tenantId,
+      queued.inputId,
+    ]);
+    const attachmentIds = (
+      await query(
+        'SELECT attachment_id FROM message_attachments WHERE tenant_id=$1 AND message_id=$2',
+        [ctx.tenantId, queued.inputId],
+      )
+    ).map((r) => r.attachment_id as string);
+    await sendToBrain(
+      ctx,
+      queued.conv,
+      queued.run.id,
+      input.content,
+      attachmentIds,
+      queued.selected.specialty,
+    );
+  }
+  return queued.run;
 }
 export async function controlSandbox(ctx: Context, id: string, input: unknown) {
   const d = z
@@ -385,6 +426,13 @@ export async function controlSandbox(ctx: Context, id: string, input: unknown) {
     );
     await audit(c, ctx, 'sandbox.' + d.action, 'conversations', id, conv.unit_id);
     return row;
+  }).then(async (row) => {
+    if (d.action === 'takeover') await brainTakeOver(id, ctx.name);
+    else {
+      await brainGiveBack(id);
+      if (d.action === 'reset') await brainReset(id);
+    }
+    return row;
   });
 }
 
@@ -401,5 +449,8 @@ export async function deleteSandbox(ctx: Context, id: string) {
     );
     await audit(c, ctx, 'sandbox.deleted', 'conversations', id, conv.unit_id);
     return { deleted: true };
+  }).then(async (r) => {
+    await brainClose(id, 'Sessão excluída na Integrar.');
+    return r;
   });
 }

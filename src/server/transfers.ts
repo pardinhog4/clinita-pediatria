@@ -3,6 +3,7 @@ import { transaction } from '@/lib/db';
 import { ApiError } from '@/lib/errors';
 import { permit, type Context } from '@/lib/security';
 import { audit, scopeRow, version, receptionRoles, clinicalAccess } from './repository';
+import { brainClose, brainTransfer } from './brain/bridge';
 export async function transferConversation(ctx: Context, id: string, input: unknown) {
   permit(ctx, receptionRoles);
   const d = z
@@ -16,7 +17,8 @@ export async function transferConversation(ctx: Context, id: string, input: unkn
     })
     .strict()
     .parse(input);
-  return transaction(async (c) => {
+  let after: (() => Promise<unknown>) | undefined;
+  const result = await transaction(async (c) => {
     const conv = await scopeRow(c, ctx, 'conversations', id, true);
     version(conv, d.version);
     if (conv.include_clinical_context && conv.patient_id)
@@ -24,7 +26,7 @@ export async function transferConversation(ctx: Context, id: string, input: unkn
     const {
       rows: [queue],
     } = await c.query(
-      'SELECT name FROM service_queues WHERE tenant_id=$1 AND unit_id=$2 AND id=$3 AND active=true',
+      'SELECT name,code FROM service_queues WHERE tenant_id=$1 AND unit_id=$2 AND id=$3 AND active=true',
       [ctx.tenantId, conv.unit_id, d.queue_id],
     );
     if (!queue) throw new ApiError(422, 'Selecione uma fila válida desta unidade.');
@@ -58,6 +60,10 @@ export async function transferConversation(ctx: Context, id: string, input: unkn
       queueId: d.queue_id,
       assignedUserId: d.assigned_user_id || null,
     });
+    after = () =>
+      d.status === 'DONE' ? brainClose(id, d.reason) : brainTransfer(id, queue.code, d.reason);
     return row;
   });
+  if (after) await after();
+  return result;
 }

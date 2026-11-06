@@ -13,6 +13,7 @@ import {
 import { createAppointmentsWithClient } from './service';
 import { appointmentSchema } from '@/lib/schemas';
 import { onProposalDecided, addPlanSpecialties } from './referral-scheduling';
+import { brainClose, brainTakeOver } from './brain/bridge';
 export async function teamQueue(ctx: Context, unit: string) {
   permit(ctx, receptionRoles);
   assertUnit(ctx, unit);
@@ -230,6 +231,12 @@ export async function decideProposal(ctx: Context, unit: string, input: unknown)
   });
 }
 export async function conversationControl(ctx: Context, unit: string, input: unknown) {
+  const r = await conversationControlTx(ctx, unit, input);
+  if (r.action === 'CLOSE') await brainClose(r.id, 'Encerrado pela equipe.');
+  else await brainTakeOver(r.id, ctx.name);
+  return r.result;
+}
+async function conversationControlTx(ctx: Context, unit: string, input: unknown) {
   permit(ctx, receptionRoles);
   const d = z
     .object({
@@ -275,6 +282,6 @@ export async function conversationControl(ctx: Context, unit: string, input: unk
       ],
     );
     await audit(c, ctx, 'conversation.' + d.action.toLowerCase(), 'conversations', conv.id, unit);
-    return { ok: true };
+    return { id: conv.id as string, action: d.action, result: { ok: true } };
   });
 }

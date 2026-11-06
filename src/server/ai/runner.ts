@@ -12,12 +12,12 @@ import { scenarioIndex } from '@/server/scenarios';
 export async function claimRun() {
   return transaction(async (c) => {
     await c.query(
-      "UPDATE agent_runs SET status='FAILED',finished_at=now(),error_code='WORKER_INTERRUPTED',error_message='Execução interrompida. Repita a análise para tentar novamente.' WHERE status='RUNNING' AND started_at<now()-interval '3 minutes'",
+      "UPDATE agent_runs SET status='FAILED',finished_at=now(),error_code='WORKER_INTERRUPTED',error_message='Execução interrompida. Repita a análise para tentar novamente.' WHERE status='RUNNING' AND provider<>'brain' AND started_at<now()-interval '3 minutes'",
     );
     const {
       rows: [job],
     } = await c.query(
-      "SELECT id FROM agent_runs WHERE status='QUEUED' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",
+      "SELECT id FROM agent_runs WHERE status='QUEUED' AND provider<>'brain' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",
     );
     if (!job) return null;
     const {

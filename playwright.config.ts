@@ -30,6 +30,7 @@ export default defineConfig({
       DATABASE_URL: process.env.TEST_DATABASE_URL || '',
       APP_ORIGIN: origin,
       NEXT_DIST_DIR: '.next-e2e',
+      AI_ENGINE: 'local',
     },
   },
 });

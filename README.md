@@ -107,6 +107,16 @@ Usar PostgreSQL gerenciado com TLS e connection pooling; o container local não 
 
 A central persiste conversas e mensagens. A aba Sandbox executa análise real de texto, imagem e PDF quando a chave e o worker estão configurados, com ferramentas e transferência humana. Não existe envio a números de WhatsApp externos, diagnóstico automático ou confirmação de convênio externo. Os contratos em `src/server/integrations/ports.ts` preparam canal, armazenamento de documentos e resultado estruturado da análise. Próximo passo: conectar um provedor de WhatsApp externo e implementar seu webhook assinado e idempotente. Não enviar prontuários a provedores sem a política de privacidade e acesso definida.
 
+## Motor de IA: local ou brain-desk
+
+`AI_ENGINE=local` (padrão) usa o OpenAI/Gemini direto com o worker desta aplicação. `AI_ENGINE=brain` delega o atendimento ao [brain-desk](../../brain-desk), o núcleo de IA separado que qualquer plataforma pluga via MCP:
+
+- A Integrar expõe as ferramentas da clínica em `POST /api/brain/mcp` (servidor MCP protegido por `BRAIN_TOOLS_SECRET`). O contexto (clínica, unidade, paciente, prontuário autorizado) vai em `_meta`, definido pela própria Integrar; a IA não consegue trocá-lo. Plano de encaminhamento e proposta de horário são gravados pela própria ferramenta.
+- O brain devolve cada execução pelo webhook assinado `POST /api/brain/eventos` (`BRAIN_WEBHOOK_SECRET`): a resposta vira mensagem, a decisão define fila e estágio, e a linha de `agent_runs` recebe decisão e rastro, então as telas do Sandbox, cenários e caixa da equipe continuam iguais.
+- Assumir, devolver, transferir, encerrar e reiniciar contexto são repassados ao brain. O worker local continua necessário para e-mails e automações, mas ignora execuções do brain.
+
+Instalação: criar a clínica no brain-desk (`npm run empresa:criar` lá), colocar `AI_ENGINE=brain`, `BRAIN_URL`, `BRAIN_API_KEY`, `BRAIN_TOOLS_SECRET` e `BRAIN_WEBHOOK_SECRET` no `.env`, subir a aplicação e rodar `npm run brain:sync` (envia persona com as regras da clínica, filas, agentes, cenários publicados, o endereço das ferramentas e o webhook). Repita o sync depois de mudar agentes ou cenários. `npm run brain:live` faz uma conversa de Sandbox real pelo brain e apaga a sessão no fim.
+
 ## Validação
 
 ```powershell
