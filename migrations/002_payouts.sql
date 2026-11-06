@@ -1,0 +1,2 @@
+CREATE TABLE payout_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id uuid NOT NULL REFERENCES tenants(id),ledger_id uuid NOT NULL,appointment_id uuid NOT NULL,amount numeric(12,2) NOT NULL CHECK(amount>0),FOREIGN KEY(tenant_id,ledger_id) REFERENCES ledger(tenant_id,id),FOREIGN KEY(tenant_id,appointment_id) REFERENCES appointments(tenant_id,id),UNIQUE(tenant_id,appointment_id));
+CREATE TRIGGER protect_payout_items BEFORE UPDATE OR DELETE ON payout_items FOR EACH ROW EXECUTE FUNCTION immutable_history();

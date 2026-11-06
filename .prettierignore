@@ -1,0 +1,10 @@
+node_modules
+.next
+.next-e2e
+backups
+artifacts
+reference
+test-results
+playwright-report
+docs/*.pdf
+package-lock.json

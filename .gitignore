@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.env*
+!.env.example
+test-results/
+playwright-report/
+artifacts/
+docs
+*.tsbuildinfo
+*.log
+reference
+tests
+
+# Build do servidor dos testes de navegador e backups do banco
+.next-e2e/
+backups/
